@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Adversarial Coder - GAN-inspired three-agent harness
-# Uses Codex (Generator) + Gemini (Planner/Evaluator)
+# Uses Codex (Generator) + Planner/Evaluator (Gemini or Kimi)
 
 # Don't exit on error - we handle errors explicitly
 # set -e  # Commented out to allow graceful error handling
@@ -20,9 +20,68 @@ MAX_SPRINTS=${MAX_SPRINTS:-10}
 MAX_RETRIES=${MAX_RETRIES:-3}
 PASS_THRESHOLD=${PASS_THRESHOLD:-7}
 CODEX_MODEL=${CODEX_MODEL:-gpt-5.4}
-GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+PLANNER_MODEL=${PLANNER_MODEL:-}  # Auto-detect: gemini or kimi
+EVALUATOR_MODEL=${EVALUATOR_MODEL:-}  # Auto-detect: gemini or kimi
 WORKDIR="${WORKDIR:-$(pwd)/adversarial-workspace}"
 TIMEOUT=${TIMEOUT:-300}  # 5 minute default per agent call
+
+# Detect available planner/evaluator
+PLANNER_CMD=""
+EVALUATOR_CMD=""
+
+detect_planner() {
+    if [[ -n "$PLANNER_MODEL" ]]; then
+        case "$PLANNER_MODEL" in
+            kimi)
+                if command -v kimi &>/dev/null; then
+                    PLANNER_CMD="kimi --print --yolo -p"
+                    return 0
+                fi
+                ;;
+            gemini)
+                if command -v gemini &>/dev/null; then
+                    PLANNER_CMD="gemini"
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+    
+    # Auto-detect: prefer kimi (better for agentic workflows), fallback to gemini
+    if command -v kimi &>/dev/null; then
+        PLANNER_CMD="kimi --print --yolo -p"
+        PLANNER_MODEL="kimi"
+    elif command -v gemini &>/dev/null; then
+        PLANNER_CMD="gemini"
+        PLANNER_MODEL="gemini"
+    else
+        echo -e "${RED}Error: No planner available. Install kimi or gemini CLI.${RESET}" >&2
+        exit 1
+    fi
+}
+
+detect_evaluator() {
+    if [[ -n "$EVALUATOR_MODEL" ]]; then
+        case "$EVALUATOR_MODEL" in
+            kimi)
+                if command -v kimi &>/dev/null; then
+                    EVALUATOR_CMD="kimi --print --yolo -p"
+                    return 0
+                fi
+                ;;
+            gemini)
+                if command -v gemini &>/dev/null; then
+                    EVALUATOR_CMD="gemini"
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+    
+    # Use same as planner by default
+    EVALUATOR_CMD="$PLANNER_CMD"
+    EVALUATOR_MODEL="$PLANNER_MODEL"
+}
 
 # Parse arguments
 PROMPT=""
@@ -54,11 +113,24 @@ while [[ $# -gt 0 ]]; do
             TIMEOUT="$2"
             shift 2
             ;;
+        --planner)
+            PLANNER_MODEL="$2"
+            shift 2
+            ;;
+        --evaluator)
+            EVALUATOR_MODEL="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "Adversarial Coder - GAN-inspired three-agent harness"
             echo ""
             echo "Usage: adversarial-coder [OPTIONS] <PROMPT>"
             echo "       adversarial-coder --file <PROMPT_FILE>"
+            echo ""
+            echo "Agents:"
+            echo "  Planner:    Kimi (preferred) or Gemini (auto-detected)"
+            echo "  Generator:  Codex (OpenAI)"
+            echo "  Evaluator:  Same as Planner"
             echo ""
             echo "Options:"
             echo "  --file, -f         Read prompt from file"
@@ -67,6 +139,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --threshold        Pass threshold 1-10 (default: 7)"
             echo "  --workdir          Working directory (default: ./adversarial-workspace)"
             echo "  --timeout          Timeout per agent call in seconds (default: 300)"
+            echo "  --planner           Planner model: kimi or gemini (default: auto-detect)"
+            echo "  --evaluator         Evaluator model: kimi or gemini (default: same as planner)"
             echo "  --help, -h         Show this help"
             exit 0
             ;;
@@ -171,9 +245,9 @@ User Request: $PROMPT"
     cd "$WORKDIR"
     local spec_output
     
-    # Use Gemini for planning (fast, cheap) with timeout
-    log_planner "Running planner (timeout: ${TIMEOUT}s)..."
-    spec_output=$(timeout "$TIMEOUT" gemini "$planner_prompt" 2>/dev/null) || {
+    # Use planner (auto-detected: kimi preferred, or gemini) with timeout
+    log_planner "Running planner with $PLANNER_MODEL (timeout: ${TIMEOUT}s)..."
+    spec_output=$(timeout "$TIMEOUT" $PLANNER_CMD "$planner_prompt" 2>/dev/null) || {
         log_error "Planner timed out or failed"
         echo "3"  # Default sprint count
         return
@@ -290,8 +364,8 @@ Proposed Sprint Contract:
 $proposal_json"
     
     local review
-    log_evaluator "Reviewing contract (timeout: ${TIMEOUT}s)..."
-    review=$(timeout "$TIMEOUT" gemini "$review_prompt" 2>/dev/null) || {
+    log_evaluator "Reviewing contract with $EVALUATOR_MODEL (timeout: ${TIMEOUT}s)..."
+    review=$(timeout "$TIMEOUT" $EVALUATOR_CMD "$review_prompt" 2>/dev/null) || {
         log "Contract review timed out, using proposal"
         final_contract="$proposal_json"
         # Save contract directly
@@ -490,10 +564,10 @@ Read the code in the \`app/\` directory and score each criterion."
     
     cd "$WORKDIR"
     
-    # Use Gemini for evaluation (adversarial) with timeout
-    log_evaluator "Running evaluator (timeout: ${TIMEOUT}s)..."
+    # Use evaluator (auto-detected: kimi or gemini) with timeout
+    log_evaluator "Running evaluator with $EVALUATOR_MODEL (timeout: ${TIMEOUT}s)..."
     local eval_output
-    eval_output=$(timeout "$TIMEOUT" gemini "$eval_prompt" 2>/dev/null) || {
+    eval_output=$(timeout "$TIMEOUT" $EVALUATOR_CMD "$eval_prompt" 2>/dev/null) || {
         log_error "Evaluator timed out"
         echo "false"
         return
@@ -542,9 +616,13 @@ except:
 
 # Main harness
 main() {
+    # Detect available planner/evaluator
+    detect_planner
+    detect_evaluator
+    
     log_divider
     log "ADVERSARIAL CODER - Three-Agent Harness"
-    log "Planner: Gemini | Generator: Codex | Evaluator: Gemini"
+    log "Planner: $PLANNER_MODEL | Generator: Codex | Evaluator: $EVALUATOR_MODEL"
     log "Max sprints: $MAX_SPRINTS | Max retries: $MAX_RETRIES | Threshold: $PASS_THRESHOLD/10"
     log "Timeout per agent: ${TIMEOUT}s"
     log_divider

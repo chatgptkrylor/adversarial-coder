@@ -1,12 +1,12 @@
 ---
 name: adversarial-coder
-description: GAN-inspired three-agent harness for reliable AI coding. Uses Codex as Generator (builds) and Gemini as Evaluator (tries to break). Separates planning, building, and evaluation into distinct agents with distinct contexts. Use for complex multi-sprint projects where quality matters more than speed. NOT for quick fixes or simple tasks.
+description: GAN-inspired three-agent harness for reliable AI coding. Uses Codex as Generator (builds) and Kimi/Gemini as Planner/Evaluator (tries to break). Separates planning, building, and evaluation into distinct agents with distinct contexts. Use for complex multi-sprint projects where quality matters more than speed. NOT for quick fixes or simple tasks.
 metadata:
   {
     "openclaw":
       {
         "emoji": "⚔️",
-        "requires": { "bins": ["codex", "gemini"] },
+        "requires": { "bins": ["codex", "kimi", "gemini"] },
       },
   }
 ---
@@ -120,8 +120,11 @@ workspace/
 ## Requirements
 
 - **Codex CLI**: `npm install -g @openai/codex`
-- **Gemini CLI**: `brew install gemini-cli` or `npm install -g @anthropic-ai/gemini-cli`
+- **Kimi CLI** (preferred): `npm install -g @anthropic-ai/kimi-cli` or `brew install kimi-cli`
+- **Gemini CLI** (fallback): `brew install gemini-cli` or `npm install -g @anthropic-ai/gemini-cli`
 - **Git**: For commit tracking
+
+The harness auto-detects Kimi (preferred for agentic workflows) or falls back to Gemini.
 
 ## The Scoring System
 
