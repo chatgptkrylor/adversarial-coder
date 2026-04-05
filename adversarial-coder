@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Adversarial Coder - GAN-inspired three-agent harness
-# Uses Codex (Generator) + Planner/Evaluator (Gemini or Kimi)
+# Uses Kimi (Generator) + GLM-5 (Evaluator/Challenger) by default
+# Fallback: Codex (Generator) + Gemini/Kimi (Evaluator)
 
 # Don't exit on error - we handle errors explicitly
 # set -e  # Commented out to allow graceful error handling
@@ -19,15 +20,103 @@ RESET='\033[0m'
 MAX_SPRINTS=${MAX_SPRINTS:-10}
 MAX_RETRIES=${MAX_RETRIES:-3}
 PASS_THRESHOLD=${PASS_THRESHOLD:-7}
-CODEX_MODEL=${CODEX_MODEL:-gpt-5.4}
-PLANNER_MODEL=${PLANNER_MODEL:-}  # Auto-detect: gemini or kimi
-EVALUATOR_MODEL=${EVALUATOR_MODEL:-}  # Auto-detect: gemini or kimi
 WORKDIR="${WORKDIR:-$(pwd)/adversarial-workspace}"
 TIMEOUT=${TIMEOUT:-120}  # 2 minute default per agent call
 
-# Detect available planner/evaluator
-PLANNER_CMD=""
+# Generator settings
+GENERATOR_MODEL=${GENERATOR_MODEL:-}  # Auto-detect: kimi (preferred) or codex
+GENERATOR_CMD=""
+
+# Evaluator/Challenger settings  
+EVALUATOR_MODEL=${EVALUATOR_MODEL:-}  # Auto-detect: glm-5 (preferred), kimi, or gemini
 EVALUATOR_CMD=""
+
+# Planner settings
+PLANNER_MODEL=${PLANNER_MODEL:-}  # Auto-detect: kimi or gemini
+PLANNER_CMD=""
+
+# GLM-5 API settings
+GLM_API_KEY=${GLM_API_KEY:-}
+GLM_API_URL="https://api.z.ai/api/coding/paas/v4/chat/completions"
+
+detect_generator() {
+    if [[ -n "$GENERATOR_MODEL" ]]; then
+        case "$GENERATOR_MODEL" in
+            kimi)
+                if command -v kimi &>/dev/null; then
+                    GENERATOR_CMD="kimi --print --yolo -p"
+                    return 0
+                fi
+                ;;
+            codex)
+                if command -v codex &>/dev/null; then
+                    GENERATOR_CMD="codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+                    return 0
+                fi
+                ;;
+            glm5|glm-5)
+                # GLM-5 via API
+                if [[ -n "$GLM_API_KEY" ]]; then
+                    GENERATOR_CMD="glm5_api"
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+    
+    # Auto-detect: prefer kimi (best for agentic workflows), fallback to codex
+    if command -v kimi &>/dev/null; then
+        GENERATOR_CMD="kimi --print --yolo -p"
+        GENERATOR_MODEL="kimi"
+    elif command -v codex &>/dev/null; then
+        GENERATOR_CMD="codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+        GENERATOR_MODEL="codex"
+    else
+        echo -e "${RED}Error: No generator available. Install kimi or codex CLI.${RESET}" >&2
+        exit 1
+    fi
+}
+
+detect_evaluator() {
+    if [[ -n "$EVALUATOR_MODEL" ]]; then
+        case "$EVALUATOR_MODEL" in
+            glm5|glm-5)
+                if [[ -n "$GLM_API_KEY" ]]; then
+                    EVALUATOR_CMD="glm5_api"
+                    return 0
+                fi
+                ;;
+            kimi)
+                if command -v kimi &>/dev/null; then
+                    EVALUATOR_CMD="kimi --print --yolo -p"
+                    return 0
+                fi
+                ;;
+            gemini)
+                if command -v gemini &>/dev/null; then
+                    EVALUATOR_CMD="gemini"
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+    
+    # Auto-detect: prefer GLM-5 via API (best adversarial challenger), fallback to kimi/gemini
+    # GLM-5 requires API key from https://open.bigmodel.cn/usercenter/apikeys
+    if [[ -n "$GLM_API_KEY" ]]; then
+        EVALUATOR_CMD="glm5_api"
+        EVALUATOR_MODEL="glm-5"
+    elif command -v kimi &>/dev/null; then
+        EVALUATOR_CMD="kimi --print --yolo -p"
+        EVALUATOR_MODEL="kimi"
+    elif command -v gemini &>/dev/null; then
+        EVALUATOR_CMD="gemini"
+        EVALUATOR_MODEL="gemini"
+    else
+        echo -e "${RED}Error: No evaluator available. Set GLM_API_KEY or install kimi/gemini CLI.${RESET}" >&2
+        exit 1
+    fi
+}
 
 detect_planner() {
     if [[ -n "$PLANNER_MODEL" ]]; then
@@ -60,27 +149,17 @@ detect_planner() {
     fi
 }
 
-detect_evaluator() {
-    if [[ -n "$EVALUATOR_MODEL" ]]; then
-        case "$EVALUATOR_MODEL" in
-            kimi)
-                if command -v kimi &>/dev/null; then
-                    EVALUATOR_CMD="kimi --print --yolo -p"
-                    return 0
-                fi
-                ;;
-            gemini)
-                if command -v gemini &>/dev/null; then
-                    EVALUATOR_CMD="gemini"
-                    return 0
-                fi
-                ;;
-        esac
-    fi
+# Call GLM-5 API
+call_glm5_api() {
+    local prompt="$1"
+    local response
     
-    # Use same as planner by default
-    EVALUATOR_CMD="$PLANNER_CMD"
-    EVALUATOR_MODEL="$PLANNER_MODEL"
+    response=$(curl -s -X POST "$GLM_API_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $GLM_API_KEY" \
+        -d "{\"model\": \"glm-5\", \"messages\": [{\"role\": \"user\", \"content\": $(echo "$prompt" | jq -Rs .)}]}")
+    
+    echo "$response" | jq -r '.choices[0].message.content // empty'
 }
 
 # Parse arguments
@@ -117,8 +196,16 @@ while [[ $# -gt 0 ]]; do
             PLANNER_MODEL="$2"
             shift 2
             ;;
+        --generator)
+            GENERATOR_MODEL="$2"
+            shift 2
+            ;;
         --evaluator)
             EVALUATOR_MODEL="$2"
+            shift 2
+            ;;
+        --glm-api-key)
+            GLM_API_KEY="$2"
             shift 2
             ;;
         --help|-h)
@@ -127,10 +214,10 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: adversarial-coder [OPTIONS] <PROMPT>"
             echo "       adversarial-coder --file <PROMPT_FILE>"
             echo ""
-            echo "Agents:"
-            echo "  Planner:    Kimi (preferred) or Gemini (auto-detected)"
-            echo "  Generator:  Codex (OpenAI)"
-            echo "  Evaluator:  Same as Planner"
+            echo "Agents (auto-detected):"
+            echo "  Planner:    Kimi (preferred) or Gemini"
+            echo "  Generator:  Kimi (preferred) or Codex (fallback)"
+            echo "  Evaluator:  GLM-5 (preferred), Kimi, or Gemini"
             echo ""
             echo "Options:"
             echo "  --file, -f         Read prompt from file"
@@ -139,8 +226,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --threshold        Pass threshold 1-10 (default: 7)"
             echo "  --workdir          Working directory (default: ./adversarial-workspace)"
             echo "  --timeout          Timeout per agent call in seconds (default: 120)"
-            echo "  --planner           Planner model: kimi or gemini (default: auto-detect)"
-            echo "  --evaluator         Evaluator model: kimi or gemini (default: same as planner)"
+            echo "  --planner           Planner: kimi or gemini (default: auto-detect)"
+            echo "  --generator         Generator: kimi, codex, or glm-5 (default: auto-detect)"
+            echo "  --evaluator         Evaluator: glm-5, kimi, or gemini (default: auto-detect)"
+            echo "  --glm-api-key       GLM-5 API key for evaluator/generator"
             echo "  --help, -h         Show this help"
             exit 0
             ;;
@@ -453,7 +542,7 @@ run_generator() {
     local attempt_num=$2
     local feedback_file="$WORKDIR/feedback/sprint-$sprint_num-round-$((attempt_num-1)).json"
     
-    log_generator "Sprint $sprint_num (attempt $attempt_num) - Building..."
+    log_generator "Sprint $sprint_num (attempt $attempt_num) - Building with $GENERATOR_MODEL..."
     
     local contract
     contract=$(cat "$WORKDIR/contracts/sprint-$sprint_num.json" 2>/dev/null || echo "")
@@ -479,13 +568,33 @@ run_generator() {
     
     cd "$WORKDIR"
     
-    # Use Codex with prompt from file via stdin
-    log_generator "Running generator (timeout: ${TIMEOUT}s)..."
-    timeout "$TIMEOUT" bash -c "cd '$WORKDIR' && source ~/.nvm/nvm.sh && cat '$prompt_file' | codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check" 2>&1 | tail -100 || {
-        log_error "Generator timed out"
-        rm -f "$prompt_file"
-        return 1
-    }
+    # Use generator (kimi or codex)
+    log_generator "Running $GENERATOR_MODEL (timeout: ${TIMEOUT}s)..."
+    
+    if [[ "$GENERATOR_CMD" == "glm5_api" ]]; then
+        # GLM-5 via API
+        local output
+        output=$(timeout "$TIMEOUT" call_glm5_api "$(cat $prompt_file)" 2>/dev/null) || {
+            log_error "Generator timed out"
+            rm -f "$prompt_file"
+            return 1
+        }
+        echo "$output"
+    elif [[ "$GENERATOR_MODEL" == "kimi" ]]; then
+        # Kimi CLI
+        timeout "$TIMEOUT" bash -c "cat '$prompt_file' | $GENERATOR_CMD" 2>&1 | tail -100 || {
+            log_error "Generator timed out"
+            rm -f "$prompt_file"
+            return 1
+        }
+    else
+        # Codex CLI (default fallback)
+        timeout "$TIMEOUT" bash -c "cd '$WORKDIR' && source ~/.nvm/nvm.sh && cat '$prompt_file' | codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check" 2>&1 | tail -100 || {
+            log_error "Generator timed out"
+            rm -f "$prompt_file"
+            return 1
+        }
+    fi
     
     rm -f "$prompt_file"
     log_generator "Sprint $sprint_num build complete"
@@ -564,14 +673,25 @@ Read the code in the \`app/\` directory and score each criterion."
     
     cd "$WORKDIR"
     
-    # Use evaluator (auto-detected: kimi or gemini) with timeout
+    # Use evaluator (GLM-5 preferred, or kimi/gemini) with timeout
     log_evaluator "Running evaluator with $EVALUATOR_MODEL (timeout: ${TIMEOUT}s)..."
     local eval_output
-    eval_output=$(timeout "$TIMEOUT" $EVALUATOR_CMD "$eval_prompt" 2>/dev/null) || {
-        log_error "Evaluator timed out"
-        echo "false"
-        return
-    }
+    
+    if [[ "$EVALUATOR_CMD" == "glm5_api" ]]; then
+        # Use GLM-5 via API
+        eval_output=$(timeout "$TIMEOUT" call_glm5_api "$eval_prompt" 2>/dev/null) || {
+            log_error "Evaluator timed out"
+            echo "false"
+            return
+        }
+    else
+        # Use kimi or gemini CLI
+        eval_output=$(timeout "$TIMEOUT" $EVALUATOR_CMD "$eval_prompt" 2>/dev/null) || {
+            log_error "Evaluator timed out"
+            echo "false"
+            return
+        }
+    fi
     
     # Extract JSON from evaluation
     local eval_json
@@ -616,13 +736,14 @@ except:
 
 # Main harness
 main() {
-    # Detect available planner/evaluator
+    # Detect available agents
     detect_planner
+    detect_generator
     detect_evaluator
     
     log_divider
     log "ADVERSARIAL CODER - Three-Agent Harness"
-    log "Planner: $PLANNER_MODEL | Generator: Codex | Evaluator: $EVALUATOR_MODEL"
+    log "Planner: $PLANNER_MODEL | Generator: $GENERATOR_MODEL | Evaluator: $EVALUATOR_MODEL"
     log "Max sprints: $MAX_SPRINTS | Max retries: $MAX_RETRIES | Threshold: $PASS_THRESHOLD/10"
     log "Timeout per agent: ${TIMEOUT}s"
     log_divider
