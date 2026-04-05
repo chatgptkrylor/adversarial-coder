@@ -154,12 +154,17 @@ call_glm5_api() {
     local prompt="$1"
     local response
     
+    # Escape the prompt for JSON
+    local escaped_prompt
+    escaped_prompt=$(echo "$prompt" | jq -Rs .)
+    
     response=$(curl -s -X POST "$GLM_API_URL" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $GLM_API_KEY" \
-        -d "{\"model\": \"glm-5\", \"messages\": [{\"role\": \"user\", \"content\": $(echo "$prompt" | jq -Rs .)}]}")
+        -d "{\"model\": \"glm-5\", \"messages\": [{\"role\": \"user\", \"content\": $escaped_prompt}], \"stream\": false}" 2>/dev/null)
     
-    echo "$response" | jq -r '.choices[0].message.content // empty'
+    # Extract content from response
+    echo "$response" | jq -r '.choices[0].message.content // .error.message // "No response"' 2>/dev/null || echo "Failed to parse response"
 }
 
 # Parse arguments
@@ -581,8 +586,8 @@ run_generator() {
         }
         echo "$output"
     elif [[ "$GENERATOR_MODEL" == "kimi" ]]; then
-        # Kimi CLI
-        timeout "$TIMEOUT" bash -c "cat '$prompt_file' | $GENERATOR_CMD" 2>&1 | tail -100 || {
+        # Kimi CLI - use -p flag with prompt
+        timeout "$TIMEOUT" $GENERATOR_CMD "$(cat $prompt_file)" 2>&1 | tail -100 || {
             log_error "Generator timed out"
             rm -f "$prompt_file"
             return 1
@@ -680,7 +685,7 @@ Read the code in the \`app/\` directory and score each criterion."
     if [[ "$EVALUATOR_CMD" == "glm5_api" ]]; then
         # Use GLM-5 via API
         eval_output=$(timeout "$TIMEOUT" call_glm5_api "$eval_prompt" 2>/dev/null) || {
-            log_error "Evaluator timed out"
+            log_error "Evaluator timed out or failed"
             echo "false"
             return
         }
