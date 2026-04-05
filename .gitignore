@@ -1,0 +1,19 @@
+*.py
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+.env
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Workspace artifacts
+adversarial-workspace/
+workspace/
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
