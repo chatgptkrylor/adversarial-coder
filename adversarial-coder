@@ -101,19 +101,19 @@ detect_evaluator() {
         esac
     fi
     
-    # Auto-detect: prefer GLM-5 via API (best adversarial challenger), fallback to kimi/gemini
-    # GLM-5 requires API key from https://open.bigmodel.cn/usercenter/apikeys
-    if [[ -n "$GLM_API_KEY" ]]; then
-        EVALUATOR_CMD="glm5_api"
-        EVALUATOR_MODEL="glm-5"
-    elif command -v kimi &>/dev/null; then
+    # Auto-detect: prefer kimi (large context window), fallback to glm-5/gemini
+    # Kimi's 262K context is better for evaluation prompts with code
+    if command -v kimi &>/dev/null; then
         EVALUATOR_CMD="kimi --print --yolo -p"
         EVALUATOR_MODEL="kimi"
+    elif [[ -n "$GLM_API_KEY" ]]; then
+        EVALUATOR_CMD="glm5_api"
+        EVALUATOR_MODEL="glm-5"
     elif command -v gemini &>/dev/null; then
         EVALUATOR_CMD="gemini"
         EVALUATOR_MODEL="gemini"
     else
-        echo -e "${RED}Error: No evaluator available. Set GLM_API_KEY or install kimi/gemini CLI.${RESET}" >&2
+        echo -e "${RED}Error: No evaluator available. Install kimi/gemini CLI or set GLM_API_KEY.${RESET}" >&2
         exit 1
     fi
 }
@@ -222,7 +222,7 @@ while [[ $# -gt 0 ]]; do
             echo "Agents (auto-detected):"
             echo "  Planner:    Kimi (preferred) or Gemini"
             echo "  Generator:  Kimi (preferred) or Codex (fallback)"
-            echo "  Evaluator:  GLM-5 (preferred), Kimi, or Gemini"
+            echo "  Evaluator:  Kimi (preferred, large context) or GLM-5/Gemini"
             echo ""
             echo "Options:"
             echo "  --file, -f         Read prompt from file"
