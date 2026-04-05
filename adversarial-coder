@@ -23,7 +23,7 @@ CODEX_MODEL=${CODEX_MODEL:-gpt-5.4}
 PLANNER_MODEL=${PLANNER_MODEL:-}  # Auto-detect: gemini or kimi
 EVALUATOR_MODEL=${EVALUATOR_MODEL:-}  # Auto-detect: gemini or kimi
 WORKDIR="${WORKDIR:-$(pwd)/adversarial-workspace}"
-TIMEOUT=${TIMEOUT:-300}  # 5 minute default per agent call
+TIMEOUT=${TIMEOUT:-120}  # 2 minute default per agent call
 
 # Detect available planner/evaluator
 PLANNER_CMD=""
@@ -138,7 +138,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --max-retries      Max retries per sprint (default: 3)"
             echo "  --threshold        Pass threshold 1-10 (default: 7)"
             echo "  --workdir          Working directory (default: ./adversarial-workspace)"
-            echo "  --timeout          Timeout per agent call in seconds (default: 300)"
+            echo "  --timeout          Timeout per agent call in seconds (default: 120)"
             echo "  --planner           Planner model: kimi or gemini (default: auto-detect)"
             echo "  --evaluator         Evaluator model: kimi or gemini (default: same as planner)"
             echo "  --help, -h         Show this help"

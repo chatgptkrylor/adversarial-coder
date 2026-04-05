@@ -49,7 +49,7 @@ Defaults can be overridden via environment variables or flags:
 | `maxSprints` | 10 | Maximum number of sprints |
 | `maxRetriesPerSprint` | 3 | Max evaluation retries before failing |
 | `passThreshold` | 7 | Minimum score (out of 10) for each criterion |
-| `TIMEOUT` | 300 | Timeout per agent call in seconds |
+| `TIMEOUT` | 120 | Timeout per agent call in seconds |
 | `CODEX_MODEL` | gpt-5.4 | Model for Generator |
 | `GEMINI_MODEL` | gemini-2.5-flash | Model for Planner/Evaluator |
 
